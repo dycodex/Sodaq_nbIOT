@@ -37,6 +37,11 @@ struct SaraN2UDPPacketMetadata {
     int remainingLength;
 };
 
+struct SaraR4TCPPacketMetadata {
+    uint8_t socketID;
+    int length;
+};
+
 class Sodaq_nbIOT: public Sodaq_AT_Device
 {
     public:
@@ -110,7 +115,16 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         bool ping(const char* ip);
         bool closeSocket(uint8_t socket);
         bool waitForUDPResponse(uint32_t timeoutMS = DEFAULT_UDP_TIMOUT_MS);
-        
+
+        // TCP connectivity
+        int createTCPSocket(uint16_t localPort = 0);
+        bool connectTCPSocket(uint8_t socket, const char* remoteAddr, uint16_t remotePort);
+        int writeTCPSocket(uint8_t socket, char* data, size_t length);
+        int receiveBytesTCPSocket(uint8_t* buffer, size_t length);
+        int receiveHexTCPSocket(char* buffer, size_t length);
+        bool hasPendingTCPBytes();
+        size_t getPendingTCPBytes();
+        bool isTCPSocketConnected();
         
         bool sendMessage(const uint8_t* buffer, size_t size);
         bool sendMessage(const char* str);
@@ -194,9 +208,14 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         bool setNconfigParam(const char* param, const char* value);
         bool checkAndApplyNconfig();
         void reboot();
+
+        bool _tcpSocketConnected;
+        int _receivedTCPResponseSocket = 0;
+        size_t _pendingTCPBytes = 0;
         
         // For sara R4XX, receiving in chunks does NOT work, you have to receive the full packet
         size_t socketReceive(SaraN2UDPPacketMetadata* packet, char* buffer, size_t size);
+        size_t receiveTCPSocket(char* buffer, size_t size);
         static uint32_t convertDatetimeToEpoch(int y, int m, int d, int h, int min, int sec);
 
         static ResponseTypes _cclkParser(ResponseTypes& response, const char* buffer, size_t size, uint32_t* epoch, uint8_t* dummy);
@@ -213,6 +232,9 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
 
         static ResponseTypes _cgattParser(ResponseTypes& response, const char* buffer, size_t size, uint8_t* result, uint8_t* dummy);
         static ResponseTypes _nconfigParser(ResponseTypes& response, const char* buffer, size_t size, bool* nconfigEqualsArray, uint8_t* dummy);
+
+        static ResponseTypes _writeTCPSocketParser(ResponseTypes& response, const char* buffer, size_t size, int* socketID, int* writtenLength);
+        static ResponseTypes _tcpReadSocketParser(ResponseTypes& response, const char* buffer, size_t size, SaraR4TCPPacketMetadata* packet, char* data);
 };
 
 #endif

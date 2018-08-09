@@ -19,7 +19,7 @@
 */
 
 #include "Sodaq_nbIOT.h"
-#include <Sodaq_wdt.h>
+// #include <Sodaq_wdt.h>
 #include "time.h"
 
 //#define DEBUG
@@ -213,7 +213,7 @@ ResponseTypes Sodaq_nbIOT::readResponse(char* buffer, size_t size,
     do {
         // 250ms,  how many bytes at which baudrate?
         int count = readLn(buffer, size, 250);
-        sodaq_wdt_reset();
+        // sodaq_wdt_reset();
         
         if (count > 0) {
             if (outSize) {
@@ -262,6 +262,31 @@ ResponseTypes Sodaq_nbIOT::readResponse(char* buffer, size_t size,
                 debugPrintLn(dataLength);
                 _receivedUDPResponseSocket = socketID;
                 _pendingUDPBytes = dataLength;
+
+                continue;
+            } else if (sscanf(buffer, "+UUSOCO: %d,%d", &param1, &param2) == 2) {
+                // int socketID = param1;
+                // int connectError = param2;
+
+                debugPrint("Connect result: ");
+                debugPrint(param1);
+                debugPrint(" -> ");
+                debugPrintLn(param2);
+
+                _tcpSocketConnected = true;
+
+                continue;
+            } else if (sscanf(buffer, "+UUSORD: %d,%d", &param1, &param2) == 2) {
+                int socketID = param1;
+                int length = param2;
+
+                debugPrint("Unsolicited Response: Socket");
+                debugPrint(param1);
+                debugPrint(": ");
+                debugPrintLn(length);
+
+                _receivedTCPResponseSocket = socketID;
+                _pendingTCPBytes = length;
 
                 continue;
             }
@@ -616,7 +641,8 @@ bool Sodaq_nbIOT::attachGprs(uint32_t timeout)
         //    return true;
         //}
         
-        sodaq_wdt_safe_delay(delay_count);
+        // sodaq_wdt_safe_delay(delay_count);
+        delay(delay_count);
         
         // Next time wait a little longer, but not longer than 5 seconds
         if (delay_count < 5000) {
@@ -647,6 +673,60 @@ int Sodaq_nbIOT::createSocket(uint16_t localPort)
     }
     
     return SOCKET_FAIL;
+}
+
+int Sodaq_nbIOT::createTCPSocket(uint16_t localPort) {
+    // only for SARA R4
+    if (!_isSaraR4XX) {
+        return SOCKET_FAIL;
+    }
+
+    print("AT+USOCR=16,");
+    println(localPort);
+
+    uint8_t socket;
+    if (readResponse<uint8_t, uint8_t>(_createSocketParser, &socket, NULL) == ResponseOK) {
+        return socket;
+    }
+
+    return SOCKET_FAIL;
+}
+
+bool Sodaq_nbIOT::connectTCPSocket(uint8_t socket, const char* remoteAddr, uint16_t remotePort) {
+    if (!_isSaraR4XX) {
+        return false;
+    }
+
+    print("AT+USOCO=");
+    print(socket);
+    print(",\"");
+    print(remoteAddr);
+    print("\",");
+    println(remotePort);
+
+    return true;
+}
+
+int Sodaq_nbIOT::writeTCPSocket(uint8_t socket, char* data, size_t length) {
+    if (!_isSaraR4XX) {
+        return -1;
+    }
+
+    print("AT+USOWR=");
+    print(socket);
+    print(",");
+    print(length);
+    print(",");
+    print("\"");
+    print(data);
+    println("\"");
+
+    int sock, written;
+    if (readResponse<int, int>(_writeTCPSocketParser, &sock, &written) == ResponseOK) {
+        return written;
+    }
+
+    return -1;
 }
 
 bool Sodaq_nbIOT::closeSocket(uint8_t socketID)
@@ -740,7 +820,8 @@ bool Sodaq_nbIOT::waitForUDPResponse(uint32_t timeoutMS)
         else {
             isAlive();
         }
-        sodaq_wdt_safe_delay(10);
+        // sodaq_wdt_safe_delay(10);
+        delay(10);
     }
     
     return hasPendingUDPBytes();
@@ -751,9 +832,24 @@ size_t Sodaq_nbIOT::getPendingUDPBytes()
     return _pendingUDPBytes;
 }
 
+size_t Sodaq_nbIOT::getPendingTCPBytes()
+{
+    return _pendingTCPBytes;
+}
+
 bool Sodaq_nbIOT::hasPendingUDPBytes()
 {
     return _pendingUDPBytes > 0;
+}
+
+bool Sodaq_nbIOT::hasPendingTCPBytes()
+{
+    return _pendingTCPBytes > 0;
+}
+
+bool Sodaq_nbIOT::isTCPSocketConnected()
+{
+    return _tcpSocketConnected;
 }
 
 size_t Sodaq_nbIOT::socketReceive(SaraN2UDPPacketMetadata* packet, char* buffer, size_t size)
@@ -810,6 +906,59 @@ size_t Sodaq_nbIOT::socketReceiveBytes(uint8_t* buffer, size_t length, SaraN2UDP
     char tempBuffer[MAX_UDP_BUFFER];
 
     size_t receivedSize = socketReceive(p ? p : &packet, tempBuffer, size);
+
+    if (buffer && length > 0) {
+        for (size_t i = 0; i < receivedSize * 2; i += 2) {
+            buffer[i / 2] = HEX_PAIR_TO_BYTE(tempBuffer[i], tempBuffer[i + 1]);
+        }
+    }
+    
+    return receivedSize;
+}
+
+size_t Sodaq_nbIOT::receiveTCPSocket(char* buffer, size_t size)
+{
+    size_t maxBufferSize = size;
+
+    if (!hasPendingTCPBytes()) {
+        debugPrintLn("Reading from without available bytes!");
+        return 0;
+    }
+
+    print("AT+USORD=");
+    print(_receivedTCPResponseSocket);
+    print(',');
+
+    size_t readSize = min(maxBufferSize, _pendingTCPBytes);
+    println(readSize);
+    
+    SaraR4TCPPacketMetadata packet;
+    if (readResponse<SaraR4TCPPacketMetadata, char>(_tcpReadSocketParser, &packet, buffer) == ResponseOK) {
+        // update pending bytes
+        _pendingTCPBytes -= packet.length;
+        
+        return packet.length;
+    }
+    
+    debugPrintLn("Reading from socket failed!");
+    return 0;
+}
+
+int Sodaq_nbIOT::receiveHexTCPSocket(char* buffer, size_t length)
+{
+    size_t receiveSize = length;
+    receiveSize = min(receiveSize, _pendingTCPBytes);
+
+    return receiveTCPSocket(buffer, receiveSize);
+}
+
+int Sodaq_nbIOT::receiveBytesTCPSocket(uint8_t* buffer, size_t length)
+{
+    size_t size = min(length, min(MAX_UDP_BUFFER, _pendingTCPBytes));
+
+    char tempBuffer[MAX_UDP_BUFFER];
+
+    size_t receivedSize = receiveTCPSocket(tempBuffer, size);
 
     if (buffer && length > 0) {
         for (size_t i = 0; i < receivedSize * 2; i += 2) {
@@ -1144,7 +1293,8 @@ bool Sodaq_nbIOT::waitForSignalQuality(uint32_t timeout)
             }
         }
         
-        sodaq_wdt_safe_delay(delay_count);
+        // sodaq_wdt_safe_delay(delay_count);
+        delay(delay_count);
         
         // Next time wait a little longer, but not longer than 5 seconds
         if (delay_count < 5000) {
@@ -1361,6 +1511,17 @@ bool Sodaq_nbIOT::sendMessage(String str)
     return sendMessage(str.c_str());
 }
 
+ResponseTypes Sodaq_nbIOT::_writeTCPSocketParser(ResponseTypes& response, const char* buffer, size_t size, int* socketID, int* writtenLength) {
+    int sock, length;
+    if (sscanf(buffer, "+USOWR: %d,%d", &sock, &length) == 2) {
+        *socketID = sock;
+        *writtenLength = length;
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
+}
+
 // ==============================
 // on/off class
 // ==============================
@@ -1395,7 +1556,8 @@ void Sodaq_nbIotOnOff::on()
 
     if (_saraR4XXTogglePin >= 0) {
         digitalWrite(_saraR4XXTogglePin, LOW);
-        sodaq_wdt_safe_delay(2000);
+        // sodaq_wdt_safe_delay(2000);
+        delay(2000);
         pinMode(_saraR4XXTogglePin, INPUT);
     }
 
