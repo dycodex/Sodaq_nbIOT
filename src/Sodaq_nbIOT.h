@@ -93,6 +93,11 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         
         // Returns true if the modem is connected to the network and has an activated data connection.
         bool isConnected();
+
+        bool autoConnect(uint32_t timeout = 30000);
+
+        bool enableHex();
+        bool disableHex();
         
         // Gets the Received Signal Strength Indication in dBm and Bit Error Rate.
         // Returns true if successful.
@@ -235,6 +240,8 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
 
         static ResponseTypes _writeTCPSocketParser(ResponseTypes& response, const char* buffer, size_t size, int* socketID, int* writtenLength);
         static ResponseTypes _tcpReadSocketParser(ResponseTypes& response, const char* buffer, size_t size, SaraR4TCPPacketMetadata* packet, char* data);
+
+        static ResponseTypes _setHexConfig(ResponseTypes& response, const char* buffer, size_t size, int status);
 };
 
 #endif

@@ -22,7 +22,7 @@
 // #include <Sodaq_wdt.h>
 #include "time.h"
 
-//#define DEBUG
+#define DEBUG
 
 #define EPOCH_TIME_OFF      946684800  // This is 1st January 2000, 00:00:00 in epoch time
 #define EPOCH_TIME_YEAR_OFF 100        // years since 1900
@@ -573,6 +573,26 @@ bool Sodaq_nbIOT::checkAndApplyNconfig()
     return false;
 }
 
+bool Sodaq_nbIOT::enableHex() {
+    if (!_isSaraR4XX) {
+        return false;
+    }
+
+    println("AT+UDCONF=1,1");
+
+    return readResponse() == ResponseOK;
+}
+
+bool Sodaq_nbIOT::disableHex() {
+    if (!_isSaraR4XX) {
+        return false;
+    }
+
+    println("AT+UDCONF=1,0");
+
+    return readResponse() == ResponseOK;
+}
+
 bool Sodaq_nbIOT::setNconfigParam(const char* param, const char* value)
 {
     if (_isSaraR4XX) {
@@ -681,7 +701,7 @@ int Sodaq_nbIOT::createTCPSocket(uint16_t localPort) {
         return SOCKET_FAIL;
     }
 
-    print("AT+USOCR=16,");
+    print("AT+USOCR=6,");
     println(localPort);
 
     uint8_t socket;
@@ -1165,6 +1185,23 @@ bool Sodaq_nbIOT::isConnected()
     }
     
     return false;
+}
+
+bool Sodaq_nbIOT::autoConnect(uint32_t timeout) {
+    if (!waitForSignalQuality()) {
+        return false;
+    }
+
+    uint32_t start = millis();
+    bool ret = false;
+    while (millis() - start < timeout) {
+        ret = isConnected();
+        if (ret) {
+            return true;
+        }
+    }
+
+    return ret;
 }
 
 // Gets the Received Signal Strength Indication in dBm and Bit Error Rate.
