@@ -48,11 +48,12 @@ int Sodaq_nbIOT_UDP::beginPacket() {
     _txBufferLength = 0;
     if (_socket == -1) {
         _socket = _nbiot->createSocket();
-        if (_socket == -1) {
+        if (_socket < 0) {
             return 0;
         }
     }
 
+    _nbiot->enableHex();
     return 1;
 }
 

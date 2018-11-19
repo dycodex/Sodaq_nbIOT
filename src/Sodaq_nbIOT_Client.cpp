@@ -16,16 +16,18 @@ int Sodaq_nbIOT_Client::connect(IPAddress ip, uint16_t port) {
 
     _socket = _nbiot->createTCPSocket();
     if (_socket < 0) {
+        _connected = false;
         return 0;
     }
 
-    if (_nbiot->connectTCPSocket(_socket, _remoteIP.toString().c_str(), _remotePort)) {
-        _connected = true;
-
-        return 1;
+    if (!_nbiot->connectTCPSocket(_socket, _remoteIP.toString().c_str(), _remotePort)) {
+        _connected = false;
+        return 0;
     }
 
-    return 0;
+    _connected = true;
+
+    return 1;
 }
 
 int Sodaq_nbIOT_Client::connect(const char* host, uint16_t port) {
@@ -44,17 +46,24 @@ size_t Sodaq_nbIOT_Client::write(const uint8_t *buf, size_t size) {
 }
 
 int Sodaq_nbIOT_Client::available() {
-    if (_nbiot->hasPendingTCPBytes()) {
-        return (int)_nbiot->getPendingTCPBytes();
+    if (_socket > -1) {
+        return _nbiot->getPendingTCPBytes(_socket);
     }
 
     return 0;
 }
 
 int Sodaq_nbIOT_Client::read() {
-    uint8_t data;
-    int res = _nbiot->receiveBytesTCPSocket(&data, 1);
+    byte data;
 
+    if (_peek != 1) {
+        data = _peek;
+        _peek = -1;
+
+        return data;
+    }
+
+    int res = read(&data, 1);
     if (res < 0) {
         return res;
     }
@@ -63,7 +72,7 @@ int Sodaq_nbIOT_Client::read() {
 }
 
 int Sodaq_nbIOT_Client::read(uint8_t* buf, size_t size) {
-    return _nbiot->receiveBytesTCPSocket(buf, size);
+    return _nbiot->receiveHexTCPSocket((char*)buf, size);
 }
 
 void Sodaq_nbIOT_Client::flush() {
@@ -71,13 +80,29 @@ void Sodaq_nbIOT_Client::flush() {
 }
 
 void Sodaq_nbIOT_Client::stop() {
+    if (_socket < 0) {
+        return;
+    }
 
+    _nbiot->closeSocket(_socket);
+
+    _socket = -1;
 }
 
 uint8_t Sodaq_nbIOT_Client::connected() {
-    return (uint8_t)_connected;
+    if (_socket < 0) {
+        return 0;
+    }
+
+    SaraR4SocketStatus status = _nbiot->getTCPSocketStatus(_socket);
+
+    return status != SOCKET_INACTIVE && status != SOCKET_UNKNOWN_STATUS;
 }
 
 int Sodaq_nbIOT_Client::peek() {
-    return available();
+    if (_peek == -1) {
+        _peek = read();
+    }
+
+    return _peek;
 }

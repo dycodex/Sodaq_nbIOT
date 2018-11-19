@@ -26,7 +26,7 @@
 
 #define DEFAULT_CID 0
 
-#include "Arduino.h"
+#include <Arduino.h>
 #include "Sodaq_AT_Device.h"
 
 struct SaraN2UDPPacketMetadata {
@@ -41,6 +41,32 @@ struct SaraR4TCPPacketMetadata {
     uint8_t socketID;
     int length;
 };
+
+struct SaraR4RadioInformation {
+    int rsrp;
+    int rsrq;
+    int rssi;
+    int uRAT;
+    int mcc;
+    int mnc;
+    int earfcn;
+    int pcid;
+};
+
+typedef enum SaraR4SocketStatus {
+    SOCKET_INACTIVE = 0,
+    SOCKET_LISTEN,
+    SOCKET_SYN_SENT,
+    SOCKET_SYN_RCVD,
+    SOCKET_ESTABLISHED,
+    SOCKET_FIN_WAIT_1,
+    SOCKET_FIN_WAIT_2,
+    SOCKET_CLOSE_WAIT,
+    SOCKET_CLOSING,
+    SOCKET_LAST_ACK,
+    SOCKET_TIME_WAIT,
+    SOCKET_UNKNOWN_STATUS = -1,
+} SaraR4SocketStatus;
 
 class Sodaq_nbIOT: public Sodaq_AT_Device
 {
@@ -68,7 +94,13 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         bool getEpoch(uint32_t* epoch);
         bool setBand(uint8_t band);
         bool setVerboseErrors(bool on);
-        
+
+        void enableEDRX(const char* period);
+        void disableEDRX();
+
+        void enablePSM();
+        void disablePSM();
+
         // Returns true if the modem replies to "AT" commands without timing out.
         bool isAlive();
         
@@ -87,7 +119,9 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
 
         // Turns on and initializes the modem, then connects to the network and activates the data connection.
         bool connect(const char* apn, const char* cdp, const char* forceOperator = 0, uint8_t band = 8);
-        
+
+        bool quickConnect();
+
         // Disconnects the modem from the network.
         bool disconnect();
         
@@ -104,12 +138,17 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         bool getRSSIAndBER(int8_t* rssi, uint8_t* ber);
         int8_t convertCSQ2RSSI(uint8_t csq) const;
         uint8_t convertRSSI2CSQ(int8_t rssi) const;
-        
+
+        bool getRadioInformation(SaraR4RadioInformation* info);
+        bool getRATPreference(int* preference1, int* preference2);
+        bool getMCCMNC(int *mcc, int *mnc);
         void setMinRSSI(int rssi) { _minRSSI = rssi; }
         void setMinCSQ(int csq) { _minRSSI = convertCSQ2RSSI(csq); }
         int8_t getMinRSSI() const { return _minRSSI; }
         uint8_t getCSQtime() const { return _CSQtime; }
         int8_t getLastRSSI() const { return _lastRSSI; }
+
+        void printContext();
         
         int createSocket(uint16_t localPort = 0);
         size_t socketSend(uint8_t socket, const char* remoteIP, const uint16_t remotePort, char* buffer, size_t size);
@@ -128,8 +167,14 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         int receiveBytesTCPSocket(uint8_t* buffer, size_t length);
         int receiveHexTCPSocket(char* buffer, size_t length);
         bool hasPendingTCPBytes();
-        size_t getPendingTCPBytes();
+        size_t getPendingTCPBytes(uint8_t socket = 0);
         bool isTCPSocketConnected();
+        int getTCPSocketError();
+        SaraR4SocketStatus getTCPSocketStatus(int socket);
+
+        // moved from private
+        void reboot();
+        void shutdown();
         
         bool sendMessage(const uint8_t* buffer, size_t size);
         bool sendMessage(const char* str);
@@ -201,6 +246,8 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         // flag indicating UDP response via URC
         int _receivedUDPResponseSocket = 0;
         size_t _pendingUDPBytes = 0;
+
+        bool _hexEnabled = false;
         
         static bool startsWith(const char* pre, const char* str);
         static size_t ipToString(IP_t ip, char* buffer, size_t size);
@@ -212,10 +259,10 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         bool attachGprs(uint32_t timeout = 10L * 60L * 1000);
         bool setNconfigParam(const char* param, const char* value);
         bool checkAndApplyNconfig();
-        void reboot();
 
         bool _tcpSocketConnected;
         int _receivedTCPResponseSocket = 0;
+        int _tcpSocketError;
         size_t _pendingTCPBytes = 0;
         
         // For sara R4XX, receiving in chunks does NOT work, you have to receive the full packet
@@ -226,7 +273,7 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         static ResponseTypes _cclkParser(ResponseTypes& response, const char* buffer, size_t size, uint32_t* epoch, uint8_t* dummy);
         static ResponseTypes _csqParser(ResponseTypes& response, const char* buffer, size_t size, int* rssi, int* ber);
 
-        static ResponseTypes _createSocketParser(ResponseTypes& response, const char* buffer, size_t size, uint8_t* socket, uint8_t* dummy);
+        static ResponseTypes _createSocketParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int* dummy);
         static ResponseTypes _udpReadSocketParser(ResponseTypes& response, const char* buffer, size_t size, SaraN2UDPPacketMetadata* packet, char* data);
         static ResponseTypes _sendSocketParser(ResponseTypes& response, const char* buffer, size_t size, uint8_t* socket, size_t* length);
         static ResponseTypes _udpReadURCParser(ResponseTypes& response, const char* buffer, size_t size, uint8_t* socket, size_t* length);
@@ -242,6 +289,11 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         static ResponseTypes _tcpReadSocketParser(ResponseTypes& response, const char* buffer, size_t size, SaraR4TCPPacketMetadata* packet, char* data);
 
         static ResponseTypes _setHexConfig(ResponseTypes& response, const char* buffer, size_t size, int status);
+        static ResponseTypes _ratPreferenceParser(ResponseTypes& response, const char* buffer, size_t size, int* preference1, int* preference2);
+        static ResponseTypes _radioInfoParser(ResponseTypes& response, const char* buffer, size_t size, SaraR4RadioInformation* info, bool* unused);
+        static ResponseTypes _getMCCMNCParser(ResponseTypes& response, const char* buffer, size_t size, int* mcc, int* mnc);
+        static ResponseTypes _getAvailableBytesParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int *available);
+        static ResponseTypes _getSocketStatusParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int *status);
 };
 
 #endif

@@ -31,6 +31,8 @@ private:
     IPAddress _remoteIP;
     uint16_t _remotePort;
     bool _connected;
+
+    int _peek;
 };
 
 #endif

@@ -135,7 +135,7 @@ void Sodaq_nbIOT::init(Stream& stream, int8_t onoffPin, int8_t txEnablePin, int8
 {
     debugPrintLn("[init] started.");
 
-    _isSaraR4XX = (saraR4XXTogglePin != -1);
+    _isSaraR4XX = true; // (saraR4XXTogglePin != -1);
     if (_isSaraR4XX) {
         debugPrintLn("Enabling sara R4XX functionality");
     }
@@ -143,6 +143,8 @@ void Sodaq_nbIOT::init(Stream& stream, int8_t onoffPin, int8_t txEnablePin, int8
     initBuffer(); // safe to call multiple times
     
     setModemStream(stream);
+    debugPrint("SARA R4 Toggle Pin: ");
+    debugPrintLn(saraR4XXTogglePin);
     
     sodaq_nbIotOnOff.init(onoffPin, saraR4XXTogglePin);
     _onoff = &sodaq_nbIotOnOff;
@@ -265,15 +267,18 @@ ResponseTypes Sodaq_nbIOT::readResponse(char* buffer, size_t size,
 
                 continue;
             } else if (sscanf(buffer, "+UUSOCO: %d,%d", &param1, &param2) == 2) {
-                // int socketID = param1;
-                // int connectError = param2;
-
                 debugPrint("Connect result: ");
                 debugPrint(param1);
                 debugPrint(" -> ");
                 debugPrintLn(param2);
 
-                _tcpSocketConnected = true;
+                _tcpSocketError = param2;
+
+                if (param2 == 0) {
+                    _tcpSocketConnected = true;
+                } else {
+                    _tcpSocketConnected = false;
+                }
 
                 continue;
             } else if (sscanf(buffer, "+UUSORD: %d,%d", &param1, &param2) == 2) {
@@ -287,6 +292,13 @@ ResponseTypes Sodaq_nbIOT::readResponse(char* buffer, size_t size,
 
                 _receivedTCPResponseSocket = socketID;
                 _pendingTCPBytes = length;
+
+                continue;
+            } else if (sscanf(buffer, "+UUSOCL: %d", &param1) == 1) {
+                _tcpSocketConnected = false;
+
+                debugPrint("Unsolicited Response: Socket close:");
+                debugPrintLn(param1);
 
                 continue;
             }
@@ -416,9 +428,50 @@ void Sodaq_nbIOT::purgeAllResponsesRead()
     while ((readResponse(0, 1000) != ResponseTimeout) && !is_timedout(start, 2000)) {}
 }
 
+bool Sodaq_nbIOT::quickConnect()
+{
+    debugPrintLn("Entering quick connect mode");
+
+    if (!on()) {
+        return false;
+    }
+
+    purgeAllResponsesRead();
+
+    if (!setRadioActive(true)) {
+        return false;
+    }
+
+    if (!setVerboseErrors(true)) {
+        return false;
+    }
+
+    if (!waitForSignalQuality(20*1000)) {
+        return false;
+    }
+
+    if (!attachGprs(30*1000)) {
+        return false;
+    }
+
+    enableHex();
+
+    println("AT+CGPADDR");
+    readResponse();
+
+    #ifdef DEBUG
+    println("AT+CPSMS?");
+    readResponse();
+    readResponse();
+    #endif
+
+    return true;
+}
+
 // Turns on and initializes the modem, then connects to the network and activates the data connection.
 bool Sodaq_nbIOT::connect(const char* apn, const char* cdp, const char* forceOperator, uint8_t band)
 {
+    debugPrintLn("Entering normal connect mode");
     if (!on()) {
         return false;
     }
@@ -453,28 +506,27 @@ bool Sodaq_nbIOT::connect(const char* apn, const char* cdp, const char* forceOpe
     }
 
     if (_isSaraR4XX) {
-        println("ATE0"); // echo off
-        if (readResponse() != ResponseOK) {
-            debugPrintLn("Error: Failed to turn off echo")
-        }
+        // println("ATE0"); // echo off
+        // if (readResponse() != ResponseOK) {
+            // debugPrintLn("Error: Failed to turn off echo")
+        // }
 
-        setR4XXToNarrowband();
+        // setR4XXToNarrowband();
         // set data transfer to hex mode
-        println("AT+UDCONF=1,1");
-        readResponse();
+        enableHex();
     }
 
 #ifdef DEBUG
-    if (_isSaraR4XX) {
-        println("AT+URAT?");
-        readResponse();
-    }
-    else {
-        println("AT+NBAND?");
-        readResponse();
-        println("AT+NCONFIG?");
-        readResponse();
-    }
+    // if (_isSaraR4XX) {
+    //     println("AT+URAT?");
+    //     readResponse();
+    // }
+    // else {
+    //     println("AT+NBAND?");
+    //     readResponse();
+    //     println("AT+NCONFIG?");
+    //     readResponse();
+    // }
 #endif
 
     if (!setRadioActive(false)) {
@@ -544,6 +596,13 @@ void Sodaq_nbIOT::reboot()
     while ((readResponse() != ResponseOK) && !is_timedout(start, 2000)) { }
 }
 
+void Sodaq_nbIOT::shutdown()
+{
+    println("AT+CPWROFF");
+
+    readResponse();
+}
+
 bool Sodaq_nbIOT::checkAndApplyNconfig()
 {
     if (_isSaraR4XX) {
@@ -578,15 +637,46 @@ bool Sodaq_nbIOT::enableHex() {
         return false;
     }
 
+    _hexEnabled = true;
+
     println("AT+UDCONF=1,1");
+    delay(100);
 
     return readResponse() == ResponseOK;
+}
+
+void Sodaq_nbIOT::enableEDRX(const char* period) {
+    print("AT+CEDRXS=1,4,\"");
+    print(period);
+    println("\"");
+
+    readResponse();
+}
+
+void Sodaq_nbIOT::disableEDRX() {
+    print("AT+CEDRXS=0,4");
+
+    readResponse();
+}
+
+void Sodaq_nbIOT::enablePSM() {
+    println("AT+CPSMS=1");
+
+    readResponse();
+}
+
+void Sodaq_nbIOT::disablePSM() {
+    println("AT+CPSMS=0");
+
+    readResponse();
 }
 
 bool Sodaq_nbIOT::disableHex() {
     if (!_isSaraR4XX) {
         return false;
     }
+
+    _hexEnabled = false;
 
     println("AT+UDCONF=1,0");
 
@@ -685,10 +775,10 @@ int Sodaq_nbIOT::createSocket(uint16_t localPort)
         print(localPort);
         println(",1");
     }
+
+    int socket;
     
-    uint8_t socket;
-    
-    if (readResponse<uint8_t, uint8_t>(_createSocketParser, &socket, NULL) == ResponseOK) {
+    if (readResponse<int, int>(_createSocketParser, &socket, NULL) == ResponseOK) {
         return socket;
     }
     
@@ -704,12 +794,17 @@ int Sodaq_nbIOT::createTCPSocket(uint16_t localPort) {
     print("AT+USOCR=6,");
     println(localPort);
 
-    uint8_t socket;
-    if (readResponse<uint8_t, uint8_t>(_createSocketParser, &socket, NULL) == ResponseOK) {
+    int socket;
+    if (readResponse<int, int>(_createSocketParser, &socket, NULL) == ResponseOK) {
         return socket;
     }
 
     return SOCKET_FAIL;
+}
+
+int Sodaq_nbIOT::getTCPSocketError()
+{
+    return _tcpSocketError;
 }
 
 bool Sodaq_nbIOT::connectTCPSocket(uint8_t socket, const char* remoteAddr, uint16_t remotePort) {
@@ -724,7 +819,7 @@ bool Sodaq_nbIOT::connectTCPSocket(uint8_t socket, const char* remoteAddr, uint1
     print("\",");
     println(remotePort);
 
-    return true;
+    return readResponse() == ResponseOK;
 }
 
 int Sodaq_nbIOT::writeTCPSocket(uint8_t socket, char* data, size_t length) {
@@ -738,7 +833,14 @@ int Sodaq_nbIOT::writeTCPSocket(uint8_t socket, char* data, size_t length) {
     print(length);
     print(",");
     print("\"");
-    print(data);
+    if (_hexEnabled) {
+        for (size_t i = 0; i < length; i++) {
+            print(static_cast<char>(NIBBLE_TO_HEX_CHAR(HIGH_NIBBLE(data[i]))));
+            print(static_cast<char>(NIBBLE_TO_HEX_CHAR(LOW_NIBBLE(data[i]))));
+        }
+    } else {
+        print(data);
+    }
     println("\"");
 
     int sock, written;
@@ -799,10 +901,17 @@ size_t Sodaq_nbIOT::socketSend(uint8_t socket, const char* remoteIP, const uint1
     print(',');
     print(remotePort);
     print(',');
-    print(size / 2);
+    print(size);
     print(',');
     print('\"');
-    print(buffer);
+    if (_hexEnabled) {
+        for (size_t i = 0; i < size; i++) {
+            print(static_cast<char>(NIBBLE_TO_HEX_CHAR(HIGH_NIBBLE(buffer[i]))));
+            print(static_cast<char>(NIBBLE_TO_HEX_CHAR(LOW_NIBBLE(buffer[i]))));
+        }
+    } else {
+        print(buffer);
+    }
     println('\"');
     
     uint8_t retSocketID;
@@ -852,9 +961,66 @@ size_t Sodaq_nbIOT::getPendingUDPBytes()
     return _pendingUDPBytes;
 }
 
-size_t Sodaq_nbIOT::getPendingTCPBytes()
+void Sodaq_nbIOT::printContext()
 {
-    return _pendingTCPBytes;
+    println("AT+CGDCONT?");
+
+    readResponse();
+}
+
+size_t Sodaq_nbIOT::getPendingTCPBytes(uint8_t socket)
+{
+    int socket_, available;
+    print("AT+USORD=");
+    print(socket);
+    print(",");
+    println("0");
+
+    if (readResponse<int, int>(_getAvailableBytesParser, &socket_, &available) == ResponseOK) {
+        return max(available, (int)_pendingTCPBytes);
+    }
+
+    return -1;
+}
+
+ResponseTypes Sodaq_nbIOT::_getAvailableBytesParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int *available)
+{
+    if (!socket || !available) {
+        return ResponseError;
+    }
+
+    if (sscanf(buffer, "+USORD: %d,%d", socket, available) == 2) {
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
+}
+
+SaraR4SocketStatus Sodaq_nbIOT::getTCPSocketStatus(int socket)
+{
+    print("AT+USOCTL=");
+    print(socket);
+    println(",10");
+
+    int sock, status;
+    if (readResponse(_getSocketStatusParser, &sock, &status) == ResponseOK) {
+        return static_cast<SaraR4SocketStatus>(status);
+    }
+
+    return SOCKET_UNKNOWN_STATUS;
+}
+
+ResponseTypes Sodaq_nbIOT::_getSocketStatusParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int *status)
+{
+    if (!socket || !status) {
+        return ResponseError;
+    }
+
+    if (sscanf(buffer, "+USOCTL: %d,10,%d", socket, status) == 2) {
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
 }
 
 bool Sodaq_nbIOT::hasPendingUDPBytes()
@@ -862,6 +1028,7 @@ bool Sodaq_nbIOT::hasPendingUDPBytes()
     return _pendingUDPBytes > 0;
 }
 
+// deprecated
 bool Sodaq_nbIOT::hasPendingTCPBytes()
 {
     return _pendingTCPBytes > 0;
@@ -920,7 +1087,7 @@ size_t Sodaq_nbIOT::socketReceiveHex(char* buffer, size_t length, SaraN2UDPPacke
 
 size_t Sodaq_nbIOT::socketReceiveBytes(uint8_t* buffer, size_t length, SaraN2UDPPacketMetadata* p)
 {
-    size_t size = min(length, min(MAX_UDP_BUFFER, _pendingUDPBytes));
+    size_t size = min((int)length, min(MAX_UDP_BUFFER, (int)_pendingUDPBytes));
 
     SaraN2UDPPacketMetadata packet;
     char tempBuffer[MAX_UDP_BUFFER];
@@ -974,7 +1141,7 @@ int Sodaq_nbIOT::receiveHexTCPSocket(char* buffer, size_t length)
 
 int Sodaq_nbIOT::receiveBytesTCPSocket(uint8_t* buffer, size_t length)
 {
-    size_t size = min(length, min(MAX_UDP_BUFFER, _pendingTCPBytes));
+    size_t size = min((int)length, min(MAX_UDP_BUFFER, (int)_pendingTCPBytes));
 
     char tempBuffer[MAX_UDP_BUFFER];
 
@@ -989,8 +1156,7 @@ int Sodaq_nbIOT::receiveBytesTCPSocket(uint8_t* buffer, size_t length)
     return receivedSize;
 }
 
-ResponseTypes Sodaq_nbIOT::_createSocketParser(ResponseTypes& response, const char* buffer, size_t size,
-        uint8_t* socket, uint8_t* dummy)
+ResponseTypes Sodaq_nbIOT::_createSocketParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int* dummy)
 {
     if (!socket) {
         return ResponseError;
@@ -1204,6 +1370,40 @@ bool Sodaq_nbIOT::autoConnect(uint32_t timeout) {
     return ret;
 }
 
+bool Sodaq_nbIOT::getRATPreference(int* preference1, int* preference2)
+{
+    println("AT+URAT?");
+
+    if (readResponse<int, int>(_ratPreferenceParser, preference1, preference2) == ResponseOK) {
+        return true;
+    }
+
+    return false;
+}
+
+ResponseTypes Sodaq_nbIOT::_ratPreferenceParser(ResponseTypes& response, const char* buffer, size_t size, int* preference1, int* preference2)
+{
+    if (!preference1 || !preference2) {
+        return ResponseError;
+    }
+    
+    int pref1, pref2;
+    
+    if (sscanf(buffer, "+URAT: %d,%d", &pref1, &pref2) == 2) {
+        *preference1 = pref1;
+        *preference2 = pref2;
+        return ResponseEmpty;
+    }
+
+    if (sscanf(buffer, "+URAT: %d", &pref1) == 1) {
+        *preference1 = pref1;
+        *preference2 = 0;
+        return ResponseEmpty;
+    }
+    
+    return ResponseError;
+}
+
 // Gets the Received Signal Strength Indication in dBm and Bit Error Rate.
 // Returns true if successful.
 bool Sodaq_nbIOT::getRSSIAndBER(int8_t* rssi, uint8_t* ber)
@@ -1223,6 +1423,138 @@ bool Sodaq_nbIOT::getRSSIAndBER(int8_t* rssi, uint8_t* ber)
     }
     
     return false;
+}
+
+bool Sodaq_nbIOT::getMCCMNC(int* mcc, int* mnc)
+{
+    println("AT+COPS=0,2");
+    readResponse();
+
+    println("AT+COPS?");
+    if (readResponse<int, int>(_getMCCMNCParser, mcc, mnc) == ResponseOK) {
+        println("AT+COPS=0,0");
+        readResponse();
+
+        debugPrint("MCC: ");
+        debugPrintLn(*mcc);
+        debugPrint("MNC: ");
+        debugPrintLn(*mnc);
+
+        return true;
+    }
+    
+    println("AT+COPS=0,0");
+    readResponse();
+
+    return false;
+}
+
+ResponseTypes Sodaq_nbIOT::_getMCCMNCParser(ResponseTypes& response, const char* buffer, size_t size, int* mcc, int* mnc)
+{
+    if (!mcc || !mnc) {
+        return ResponseError;
+    }
+
+    char mccmnc[8] = {0};
+    int mode, format;
+    if (sscanf(buffer, "+COPS: %d,%d,\"%s\"", &mode, &format, mccmnc) == 3) {
+        if (format != 2) {
+            return ResponseError;
+        }
+
+        char sMcc[3] = {0};
+        strncpy(sMcc, mccmnc, 3);
+
+        char sMnc[3] = {0};
+        strncpy(sMnc, mccmnc + 3, 3);
+
+        *mnc = atoi(sMnc);
+        *mcc = atoi(sMcc);
+
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
+}
+
+bool Sodaq_nbIOT::getRadioInformation(SaraR4RadioInformation* info)
+{
+    if (!info) {
+        debugPrintLn("RadioInfo holder is null!");
+
+        return false;
+    }
+
+    int uratPref1, uratPref2;
+    if (!getRATPreference(&uratPref1, &uratPref2)) {
+        debugPrintLn("Failed to get RAT preference!");
+
+        return false;
+    }
+
+    info->uRAT = uratPref1;
+    delay(100);
+
+    int mcc, mnc;
+    if (!getMCCMNC(&mcc, &mnc)) {
+        debugPrintLn("Failed to get MCC and MNC codes!");
+
+        return false;
+    }
+
+    info->mcc = mcc;
+    info->mnc = mnc;
+    delay(100);
+
+    int8_t rssi;
+    uint8_t ber;
+    if (!getRSSIAndBER(&rssi, &ber)) {
+        debugPrintLn("Failed to get RSSI!");
+
+        return false;
+    }
+
+    info->rssi = (int)rssi;
+    delay(100);
+
+    println("AT+UCGED=5");
+    readResponse();
+
+    println("AT+UCGED?");
+
+    if (readResponse<SaraR4RadioInformation, bool>(_radioInfoParser, info, nullptr) == ResponseOK) {
+        return true;
+    }
+
+    return false;
+}
+
+ResponseTypes Sodaq_nbIOT::_radioInfoParser(ResponseTypes& response, const char* buffer, size_t size, SaraR4RadioInformation* info, bool* unused)
+{
+    if (!info) {
+        return ResponseError;
+    }
+
+    char cRSRP[6] = {0};
+    char cRSRQ[6] = {0};
+    int pcid, earfcn;
+    if (sscanf(buffer, "+RSRP: %d,%d,\"%s\"", &pcid, &earfcn, cRSRP) == 3) {
+        float rsrp = atof(cRSRP);
+        info->rsrp = (int)rsrp;
+        info->pcid = pcid;
+        info->earfcn = earfcn;
+
+        return ResponsePendingExtra;
+    }
+
+    if (sscanf(buffer, "+RSRQ: %d,%d,\"%s\"", &pcid, &earfcn, cRSRQ) == 3) {
+        float rsrq = atof(cRSRQ);
+        info->rsrq = (int)rsrq;
+
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
 }
 
 /*
@@ -1571,31 +1903,31 @@ Sodaq_nbIotOnOff::Sodaq_nbIotOnOff()
 // Initializes the instance
 void Sodaq_nbIotOnOff::init(int onoffPin, int8_t saraR4XXTogglePin)
 {
-    if (onoffPin >= 0) {
-        _onoffPin = onoffPin;
-        // First write the output value, and only then set the output mode.
-        digitalWrite(_onoffPin, LOW);
-        pinMode(_onoffPin, OUTPUT);
-    }
+    // if (onoffPin >= 0) {
+    //     _onoffPin = onoffPin;
+    //     // First write the output value, and only then set the output mode.
+    //     digitalWrite(_onoffPin, LOW);
+    //     pinMode(_onoffPin, OUTPUT);
+    // }
 
-    // always set this because its optional and can be -1
+    // // always set this because its optional and can be -1
     _saraR4XXTogglePin = saraR4XXTogglePin;
-    if (saraR4XXTogglePin >= 0) {
-        pinMode(_saraR4XXTogglePin, OUTPUT);
-    }
+    // if (saraR4XXTogglePin >= 0) {
+    //     pinMode(_saraR4XXTogglePin, OUTPUT);
+    // }
 }
 
 void Sodaq_nbIotOnOff::on()
 {
     if (_onoffPin >= 0) {
-        digitalWrite(_onoffPin, HIGH);
+        // digitalWrite(_onoffPin, HIGH);
     }
 
     if (_saraR4XXTogglePin >= 0) {
-        digitalWrite(_saraR4XXTogglePin, LOW);
+        // digitalWrite(_saraR4XXTogglePin, LOW);
         // sodaq_wdt_safe_delay(2000);
-        delay(2000);
-        pinMode(_saraR4XXTogglePin, INPUT);
+        // delay(2000);
+        // pinMode(_saraR4XXTogglePin, INPUT);
     }
 
     _onoff_status = true;
@@ -1605,7 +1937,7 @@ void Sodaq_nbIotOnOff::off()
 {
     // The GPRSbee is switched off immediately
     if (_onoffPin >= 0) {
-        digitalWrite(_onoffPin, LOW);
+        // digitalWrite(_onoffPin, LOW);
     }
     
     // Should be instant
