@@ -1103,7 +1103,7 @@ size_t Sodaq_nbIOT::socketReceiveBytes(uint8_t* buffer, size_t length, SaraN2UDP
     return receivedSize;
 }
 
-size_t Sodaq_nbIOT::receiveTCPSocket(char* buffer, size_t size)
+size_t Sodaq_nbIOT::receiveTCPSocket(int socket, char* buffer, size_t size)
 {
     size_t maxBufferSize = size;
 
@@ -1113,7 +1113,7 @@ size_t Sodaq_nbIOT::receiveTCPSocket(char* buffer, size_t size)
     }
 
     print("AT+USORD=");
-    print(_receivedTCPResponseSocket);
+    print(socket);
     print(',');
 
     size_t readSize = min(maxBufferSize, _pendingTCPBytes);
@@ -1122,7 +1122,9 @@ size_t Sodaq_nbIOT::receiveTCPSocket(char* buffer, size_t size)
     SaraR4TCPPacketMetadata packet;
     if (readResponse<SaraR4TCPPacketMetadata, char>(_tcpReadSocketParser, &packet, buffer) == ResponseOK) {
         // update pending bytes
-        _pendingTCPBytes -= packet.length;
+        if (_pendingTCPBytes > 0) {
+            _pendingTCPBytes -= packet.length;
+        }
         
         return packet.length;
     }
@@ -1131,21 +1133,38 @@ size_t Sodaq_nbIOT::receiveTCPSocket(char* buffer, size_t size)
     return 0;
 }
 
-int Sodaq_nbIOT::receiveHexTCPSocket(char* buffer, size_t length)
+ResponseTypes Sodaq_nbIOT::_tcpReadSocketParser(ResponseTypes& response, const char* buffer, size_t size, SaraR4TCPPacketMetadata* packet, char* data)
+{
+    if (!packet) {
+        return ResponseError;
+    }
+
+    if ((size == 1) && (buffer[0] == CR)) {
+        return ResponsePendingExtra;
+    }
+
+    if (sscanf(buffer, "+USORD: %d,%d,\"%[^\"]\"", (int*)&packet->socketID, &packet->length, data) == 3) {
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
+}
+
+int Sodaq_nbIOT::receiveHexTCPSocket(int socket, char* buffer, size_t length)
 {
     size_t receiveSize = length;
     receiveSize = min(receiveSize, _pendingTCPBytes);
 
-    return receiveTCPSocket(buffer, receiveSize);
+    return receiveTCPSocket(socket, buffer, receiveSize);
 }
 
-int Sodaq_nbIOT::receiveBytesTCPSocket(uint8_t* buffer, size_t length)
+int Sodaq_nbIOT::receiveBytesTCPSocket(int socket, uint8_t* buffer, size_t length)
 {
     size_t size = min((int)length, min(MAX_UDP_BUFFER, (int)_pendingTCPBytes));
 
     char tempBuffer[MAX_UDP_BUFFER];
 
-    size_t receivedSize = receiveTCPSocket(tempBuffer, size);
+    size_t receivedSize = receiveTCPSocket(socket, tempBuffer, size);
 
     if (buffer && length > 0) {
         for (size_t i = 0; i < receivedSize * 2; i += 2) {
@@ -1551,6 +1570,69 @@ ResponseTypes Sodaq_nbIOT::_radioInfoParser(ResponseTypes& response, const char*
         float rsrq = atof(cRSRQ);
         info->rsrq = (int)rsrq;
 
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
+}
+
+bool Sodaq_nbIOT::setSocketOptions(int socket, SaraR4SocketOptionsLevel level, int option, int value)
+{
+    print("AT+USOSO=");
+    print(socket);
+    print(",");
+    print((int)level);
+    print(",");
+    print(option);
+    print(",");
+    println(value);
+
+    int sock, lvl;
+    if (readResponse<int, int>(_setSocketOptionParser, &sock, &lvl) == ResponseOK) {
+        return sock == socket && ((int)level) == lvl;
+    }
+
+    return false;
+}
+
+ResponseTypes Sodaq_nbIOT::_setSocketOptionParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int* level)
+{
+    if (!socket || !level) {
+        return ResponseError;
+    }
+
+    if (sscanf(buffer, "+USOSO: %d,%d", socket, level) == 2) {
+        return ResponseEmpty;
+    }
+
+    return ResponseError;
+}
+
+int Sodaq_nbIOT::getSocketOptions(int socket, SaraR4SocketOptionsLevel level, int option)
+{
+    int value;
+
+    print("AT+USOGO=");
+    print(socket);
+    print(",");
+    print((int)level);
+    print(",");
+    println(option);
+
+    if (readResponse<int, char>(_getSocketOptionParser, &value, NULL) == ResponseOK) {
+        return value;
+    }
+
+    return -1;
+}
+
+ResponseTypes Sodaq_nbIOT::_getSocketOptionParser(ResponseTypes& response, const char* buffer, size_t size, int* value, char* unused)
+{
+    if (!value) {
+        return ResponseError;
+    }
+
+    if (sscanf(buffer, "+USOGO: %d", value) == 2) {
         return ResponseEmpty;
     }
 

@@ -68,6 +68,30 @@ typedef enum SaraR4SocketStatus {
     SOCKET_UNKNOWN_STATUS = -1,
 } SaraR4SocketStatus;
 
+typedef enum SaraR4SocketOptionsLevel {
+    SOO_LEVEL_IP_PROTO = 0,
+    SOO_LEVEL_TCP_PROTO = 6,
+    SOO_LEVEL_SOCKET = 65535,
+} SaraR4SocketOptionsLevel;
+
+typedef enum SaraR4SOOIPProtoOptions {
+    SOO_IP_PROTO_TOS = 1,
+    SOO_IP_PROTO_TTL = 2,
+} SaraR4SOOIPProtoOptions;
+
+typedef enum SaraR4SOOTCPProtoOptions {
+    SOO_TCP_PROTO_NO_DELAY = 1,
+    SOO_TCP_PROTO_KEEP_IDLE = 2,
+} SaraR4SOOTCPProtoOptions;
+
+typedef enum SaraR4SOOSocketOptions {
+    SOO_SOCKET_LOCAL_ADDR_REUSE = 4,
+    SOO_SOCKET_KEEP_ALIVE = 8,
+    SOO_SOCKET_SEND_BROADCAST = 32,
+    SOO_SOCKET_LINGER_ON_CLOSE = 128,
+    SOO_SOCKET_LOCAL_ADDR_PORT_REUSE = 512,
+} SaraR4SOOSocketOptions;
+
 class Sodaq_nbIOT: public Sodaq_AT_Device
 {
     public:
@@ -164,13 +188,16 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         int createTCPSocket(uint16_t localPort = 0);
         bool connectTCPSocket(uint8_t socket, const char* remoteAddr, uint16_t remotePort);
         int writeTCPSocket(uint8_t socket, char* data, size_t length);
-        int receiveBytesTCPSocket(uint8_t* buffer, size_t length);
-        int receiveHexTCPSocket(char* buffer, size_t length);
+        int receiveBytesTCPSocket(int socket, uint8_t* buffer, size_t length);
+        int receiveHexTCPSocket(int socket, char* buffer, size_t length);
         bool hasPendingTCPBytes();
         size_t getPendingTCPBytes(uint8_t socket = 0);
         bool isTCPSocketConnected();
         int getTCPSocketError();
         SaraR4SocketStatus getTCPSocketStatus(int socket);
+
+        bool setSocketOptions(int socket, SaraR4SocketOptionsLevel level, int option, int value);
+        int getSocketOptions(int socket, SaraR4SocketOptionsLevel level, int option);
 
         // moved from private
         void reboot();
@@ -267,7 +294,7 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         
         // For sara R4XX, receiving in chunks does NOT work, you have to receive the full packet
         size_t socketReceive(SaraN2UDPPacketMetadata* packet, char* buffer, size_t size);
-        size_t receiveTCPSocket(char* buffer, size_t size);
+        size_t receiveTCPSocket(int socket, char* buffer, size_t size);
         static uint32_t convertDatetimeToEpoch(int y, int m, int d, int h, int min, int sec);
 
         static ResponseTypes _cclkParser(ResponseTypes& response, const char* buffer, size_t size, uint32_t* epoch, uint8_t* dummy);
@@ -294,6 +321,8 @@ class Sodaq_nbIOT: public Sodaq_AT_Device
         static ResponseTypes _getMCCMNCParser(ResponseTypes& response, const char* buffer, size_t size, int* mcc, int* mnc);
         static ResponseTypes _getAvailableBytesParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int *available);
         static ResponseTypes _getSocketStatusParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int *status);
+        static ResponseTypes _setSocketOptionParser(ResponseTypes& response, const char* buffer, size_t size, int* socket, int* level);
+        static ResponseTypes _getSocketOptionParser(ResponseTypes& response, const char* buffer, size_t size, int* value, char* unused);
 };
 
 #endif

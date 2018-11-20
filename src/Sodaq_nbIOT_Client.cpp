@@ -25,6 +25,8 @@ int Sodaq_nbIOT_Client::connect(IPAddress ip, uint16_t port) {
         return 0;
     }
 
+    _nbiot->setSocketOptions(_socket, SOO_LEVEL_SOCKET, (int)SOO_SOCKET_KEEP_ALIVE, 1);
+
     _connected = true;
 
     return 1;
@@ -72,7 +74,7 @@ int Sodaq_nbIOT_Client::read() {
 }
 
 int Sodaq_nbIOT_Client::read(uint8_t* buf, size_t size) {
-    return _nbiot->receiveHexTCPSocket((char*)buf, size);
+    return _nbiot->receiveBytesTCPSocket(_socket, buf, size);
 }
 
 void Sodaq_nbIOT_Client::flush() {
