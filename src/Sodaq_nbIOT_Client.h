@@ -33,6 +33,10 @@ private:
     bool _connected;
 
     int _peek;
+    bool _shouldReconnect;
+    int _errorCount;
+
+    void incrementError();
 };
 
 #endif

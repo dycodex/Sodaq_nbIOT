@@ -156,7 +156,7 @@ int Sodaq_nbIOT_UDP::read(unsigned char* buffer, size_t length) {
     return read((char*)buffer, length);
 }
 
-int Sodaq_nbIOT_UDP::read(char* buffer, size_t length) {
+int Sodaq_nbIOT_UDP::read(char* buffer, size_t length){
     if (!_rxBuffer) {
         return 0;
     }

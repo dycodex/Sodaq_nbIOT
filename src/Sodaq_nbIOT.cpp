@@ -862,7 +862,7 @@ bool Sodaq_nbIOT::closeSocket(uint8_t socketID)
     }
     println(socketID);
     
-    return readResponse() == ResponseOK;
+    return readResponse(NULL, 60000) == ResponseOK;
 }
 
 bool Sodaq_nbIOT::ping(const char* ip)
@@ -970,14 +970,14 @@ void Sodaq_nbIOT::printContext()
 
 size_t Sodaq_nbIOT::getPendingTCPBytes(uint8_t socket)
 {
-    int socket_, available;
+    int sock, available;
     print("AT+USORD=");
     print(socket);
     print(",");
     println("0");
 
-    if (readResponse<int, int>(_getAvailableBytesParser, &socket_, &available) == ResponseOK) {
-        return max(available, (int)_pendingTCPBytes);
+    if (readResponse<int, int>(_getAvailableBytesParser, &sock, &available) == ResponseOK) {
+        return available;
     }
 
     return -1;
@@ -987,6 +987,10 @@ ResponseTypes Sodaq_nbIOT::_getAvailableBytesParser(ResponseTypes& response, con
 {
     if (!socket || !available) {
         return ResponseError;
+    }
+
+    if ((size == 1) && (buffer[0] == CR)) {
+        return ResponsePendingExtra;
     }
 
     if (sscanf(buffer, "+USORD: %d,%d", socket, available) == 2) {
@@ -1107,17 +1111,17 @@ size_t Sodaq_nbIOT::receiveTCPSocket(int socket, char* buffer, size_t size)
 {
     size_t maxBufferSize = size;
 
-    if (!hasPendingTCPBytes()) {
-        debugPrintLn("Reading from without available bytes!");
-        return 0;
-    }
+    // if (!hasPendingTCPBytes()) {
+    //     debugPrintLn("Reading from without available bytes!");
+    //     return 0;
+    // }
 
     print("AT+USORD=");
     print(socket);
     print(',');
 
-    size_t readSize = min(maxBufferSize, _pendingTCPBytes);
-    println(readSize);
+    // size_t readSize = min(maxBufferSize, _pendingTCPBytes);
+    println(size);
     
     SaraR4TCPPacketMetadata packet;
     if (readResponse<SaraR4TCPPacketMetadata, char>(_tcpReadSocketParser, &packet, buffer) == ResponseOK) {
@@ -1152,19 +1156,14 @@ ResponseTypes Sodaq_nbIOT::_tcpReadSocketParser(ResponseTypes& response, const c
 
 int Sodaq_nbIOT::receiveHexTCPSocket(int socket, char* buffer, size_t length)
 {
-    size_t receiveSize = length;
-    receiveSize = min(receiveSize, _pendingTCPBytes);
-
-    return receiveTCPSocket(socket, buffer, receiveSize);
+    return receiveTCPSocket(socket, buffer, length);
 }
 
 int Sodaq_nbIOT::receiveBytesTCPSocket(int socket, uint8_t* buffer, size_t length)
 {
-    size_t size = min((int)length, min(MAX_UDP_BUFFER, (int)_pendingTCPBytes));
-
     char tempBuffer[MAX_UDP_BUFFER];
 
-    size_t receivedSize = receiveTCPSocket(socket, tempBuffer, size);
+    size_t receivedSize = receiveTCPSocket(socket, tempBuffer, length);
 
     if (buffer && length > 0) {
         for (size_t i = 0; i < receivedSize * 2; i += 2) {

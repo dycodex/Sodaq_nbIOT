@@ -22,7 +22,7 @@
 #define _Sodaq_nbIOT_h
 
 #define DEFAULT_UDP_TIMOUT_MS 15000
-#define MAX_UDP_BUFFER 256
+#define MAX_UDP_BUFFER 1024
 
 #define DEFAULT_CID 0
 
