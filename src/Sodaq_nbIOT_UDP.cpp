@@ -48,8 +48,10 @@ int Sodaq_nbIOT_UDP::beginPacket() {
     _txBufferLength = 0;
     if (_socket == -1) {
         _socket = _nbiot->createSocket();
+        Serial.printf("Socket result: %d\n", _socket);
         if (_socket < 0) {
-            return 0;
+            _socket = 0;
+            // return 1;
         }
     }
 

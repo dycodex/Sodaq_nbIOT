@@ -16,18 +16,12 @@ int Sodaq_nbIOT_Client::connect(IPAddress ip, uint16_t port) {
 
     _socket = _nbiot->createTCPSocket();
     if (_socket < 0) {
-        _connected = false;
         return 0;
     }
 
     if (!_nbiot->connectTCPSocket(_socket, _remoteIP.toString().c_str(), _remotePort)) {
-        _connected = false;
         return 0;
     }
-
-    _nbiot->setSocketOptions(_socket, SOO_LEVEL_SOCKET, (int)SOO_SOCKET_KEEP_ALIVE, 1);
-
-    _connected = true;
 
     return 1;
 }
@@ -74,7 +68,7 @@ int Sodaq_nbIOT_Client::read() {
 }
 
 int Sodaq_nbIOT_Client::read(uint8_t* buf, size_t size) {
-    return _nbiot->receiveBytesTCPSocket(_socket, buf, size);
+    return _nbiot->receiveHexTCPSocket((char*)buf, size);
 }
 
 void Sodaq_nbIOT_Client::flush() {
@@ -91,7 +85,7 @@ void Sodaq_nbIOT_Client::stop() {
     _socket = -1;
 }
 
-uint8_t Sodaq_nbIOT_Client::connected() {
+uint8_t Sodaq_nbIOT_Client::connected(){
     if (_socket < 0) {
         return 0;
     }
